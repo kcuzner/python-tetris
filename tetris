@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import curses
-import random, time, datetime
+import random, time, datetime, math
 import xml.etree.ElementTree as ET
 
 class Event(object):
@@ -306,8 +306,10 @@ class Tetris(object):
         self.delta = datetime.timedelta()
         self.__score = 0
         self.__level = 1
+        self.__lines = 0
         self.score_changed = Event()
         self.level_changed = Event()
+        self.lines_changed = Event()
         self.grid_changed = Event()
         self.current_piece_changed = Event()
         self.possible_blocks = block_factories
@@ -336,20 +338,31 @@ class Tetris(object):
     def level(self, value):
         self.__level = value
         self.level_changed(self, self.level)
+    @property
+    def lines(self):
+        return self.__lines;
+    @lines.setter
+    def lines(self, value):
+        self.__lines = value
+        self.lines_changed(self, self.lines)
     def step(self, delta):
         self.delta += delta
         min_delta = datetime.timedelta(seconds=0.5 / self.level)
         if self.delta >= min_delta:
             self.delta = datetime.timedelta()
             if self.current_piece == None:
-                self.current_piece = self.__get_new_block((5, 0))
+                self.current_piece = \
+                    self.__get_new_block((int(self.grid.width / 2), 0))
             # attempt to move the piece down
             if not self.down():
                 # check for rows
                 self.grid.add_polyomino(self.current_piece)
                 self.current_piece = None
                 cleared = self.grid.clear_rows()
-                self.score += int(len(cleared) * (len(cleared) / 10))
+                self.lines += int(len(cleared) / self.grid.width)
+                self.score += int(len(cleared) * (len(cleared) /\
+                                                      self.grid.width))
+                self.level = int(math.floor(self.lines / 10)) + 1
     def rotate_left(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_left():
@@ -449,7 +462,10 @@ class Application(object):
                         self.window.addch(b.position[1], b.position[0],\
                                           ord('#'),\
                                           curses.color_pair(b.color))
-            self.window.addstr(15, 50, str(game.score))
+            self.window.addstr(10, 50, "Score: %i" % game.score)
+            self.window.addstr(11, 50, "Lines: %i" % game.lines)
+            self.window.addstr(12, 50, "Level: %i" % game.level)
+            self.window
             self.window.refresh()
             time.sleep(1/16)
         

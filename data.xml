@@ -1,12 +1,12 @@
 <?xml version="1.0"?>
 <data>
-    <color id="1" character="#" fg="red" bg="white"/>
-    <color id="2" character="#" fg="green" bg="white"/>
-    <color id="3" character="#" fg="blue" bg="white"/>
-    <color id="4" character="#" fg="yellow" bg="white"/>
-    <color id="5" character="#" fg="black" bg="white"/>
-    <color id="6" character="#" fg="magenta" bg="white"/>
-    <color id="7" character="#" fg="cyan" bg="white"/>
+    <color id="1" character="#" bg="red" fg="white"/>
+    <color id="2" character="#" bg="green" fg="white"/>
+    <color id="3" character="#" bg="blue" fg="white"/>
+    <color id="4" character="#" bg="yellow" fg="white"/>
+    <color id="5" character="#" bg="white" fg="white"/>
+    <color id="6" character="#" bg="magenta" fg="white"/>
+    <color id="7" character="#" bg="cyan" fg="white"/>
     <type name="Tetrominoes">
         <polyomino name="line" color="1">
             <block x="-1" y="0"/>

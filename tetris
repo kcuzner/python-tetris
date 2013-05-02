@@ -1,4 +1,16 @@
 #!/usr/bin/python
+"""
+A python implementation of tetris.
+
+Kevin Cuzner
+
+This is more of an experiment on different things, like emulating C#
+events (which I think are awesome), reading XML, and using curses
+(although that may change eventually).
+
+This uses the data.xml file to locate block shapes to use in the game.
+The colors for the blocks are also set there as well.
+"""
 
 import curses
 import random, time, datetime, math
@@ -350,11 +362,15 @@ class Tetris(object):
         min_delta = datetime.timedelta(seconds=0.5 / self.level)
         if self.delta >= min_delta:
             self.delta = datetime.timedelta()
+            new_piece = False
             if self.current_piece == None:
+                new_piece = True
                 self.current_piece = \
                     self.__get_new_block((int(self.grid.width / 2), 0))
             # attempt to move the piece down
             if not self.down():
+                if new_piece:
+                    return False # the game is done
                 # check for rows
                 self.grid.add_polyomino(self.current_piece)
                 self.current_piece = None
@@ -363,6 +379,7 @@ class Tetris(object):
                 self.score += int(len(cleared) * (len(cleared) /\
                                                       self.grid.width))
                 self.level = int(math.floor(self.lines / 10)) + 1
+        return True # continue the game
     def rotate_left(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_left():
@@ -443,7 +460,8 @@ class Application(object):
                 game.right()
             elif recvd == curses.KEY_UP:
                 game.rotate_left()
-            game.step(datetime.datetime.now() - laststep)
+            if not game.step(datetime.datetime.now() - laststep):
+                break
             laststep = datetime.datetime.now()
             self.window.clear()
             self.window.border()

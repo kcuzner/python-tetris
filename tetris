@@ -1,0 +1,481 @@
+#!/usr/bin/python
+
+import curses
+import random, time, datetime
+import xml.etree.ElementTree as ET
+
+class Event(object):
+    """
+    Event object which operates like C# events
+    
+    "event += handler" adds a handler to this event
+    "event -= handler" removes a handler from this event
+    "event(*arguments)" calls all of the handlers with the passed
+    arguments
+    
+    Events may be temporarily suppressed by using them in a with
+    statement. The context returnd will be this event object.
+    """
+    def __init__(self):
+        """
+        Initializes a new event
+        """
+        self.__handlers = []
+        self.__supress_count = 0
+    def __call__(self, *args):
+        if self.__supress_count > 0:
+            return
+        for h in self.__handlers:
+            h(*args)
+    def __iadd__(self, other):
+        if other not in self.__handlers:
+            self.__handlers.append(other)
+        return self
+    def __isub__(self, other):
+        self.__handlers.remove(other)
+        return self
+    def __enter__(self):
+        self.__supress_count += 1
+        return self
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.__supress_count -= 1
+
+class Movable(object):
+    """
+    Object with a moveable event and parentage
+    
+    The moved event has the following siguature:
+    (self, current_position, last_position)
+        self: The block object that initiated the event
+        current_position: self explanatory
+        last_position: position as recorded directly before movement
+    """
+    def __init__(self, local_position, parent=None):
+        self.__parent = parent
+        self.__local_position = local_position
+        self.moved = Event()
+        if parent is not None and hasattr(parent, 'moved'):
+            parent.moved += self.__on_parent_moved
+    def __del__(self):
+        if self.parent is not None and hasattr(parent, 'moved'):
+            parent.moved -= self.__on_parent_moved
+    def __on_parent_moved(self, parent, parent_current, parent_last):
+        """
+        Handler for the parent movement function
+        """
+        if parent is not self.parent:
+            return
+        last = self.__translate_position(parent_last)
+        self.moved(self, self.position, last)
+    @property
+    def parent(self):
+        return self.__parent
+    @parent.setter
+    def parent(self, value):
+        if self.parent is not None and hasattr(self.parent, 'moved'):
+            self.parent.moved -= self.__on_parent_moved
+        last = self.position
+        self.__parent = value
+        if self.parent is not None and hasattr(self.parent, 'moved'):
+            self.parent.moved += self.__on_parent_moved
+        self.moved(self, self.position, last)
+    @property
+    def local_position(self):
+        return self.__local_position
+    @local_position.setter
+    def local_position(self, value):
+        last = self.position
+        self.__local_position = value
+        self.moved(self, self.position, last)
+    @property
+    def position(self):
+        origin = (0,0)
+        if self.__parent is not None:
+            origin = self.__parent.position
+        return self.__translate_position(origin)
+        
+    def __translate_position(self, origin):
+        """
+        Returns this block's position translated to an origin
+        """
+        return (origin[0] + self.__local_position[0], origin[1] + \
+                self.__local_position[1])
+
+class Block(Movable):
+    """
+    Block with a moved event
+    """
+    def __init__(self, local_position, color, parent=None):
+        """
+        Initializes the block
+        
+        parent: Object with a position property used as an origin.
+          If none, (0,0) is used. If the parent has a moved event, it
+          will be subscribed to
+        lx: x position relative to parent
+        ly: y position relative to parent
+        color: color number to use
+        """
+        super().__init__(local_position, parent)
+        self.__color = color
+    @property
+    def color(self):
+        return self.__color
+
+class Polyomino(Movable):
+    def __init__(self, local_position, parent=None):
+        super().__init__(local_position, parent)
+        self.rotated = Event()
+        self.blocks = []
+    def __check_locations(self, locations):
+        pos = self.local_position
+        if self.parent is None or not hasattr(self.parent, 'is_clear'):
+            return True
+        for l in locations:
+            if not self.parent.is_clear((pos[0] + l[0], pos[1] + l[1])):
+                #raise Exception(pos, l)
+                return False
+        return True
+    def rotate_left(self):
+        """
+        Attempts to rotate this polyomino left
+        """
+        new_local_positions = []
+        # rotation equation: sin(90)=1 cos(90)=0
+        # x' = x*cos(theta) - y*sin(theta)
+        # y' = x*sin(theta) + y*cos(theta)
+        for b in self.blocks:
+            x = b.local_position[0]
+            y = b.local_position[1]
+            new_local_positions.append((-y, x, b))
+        if not self.__check_locations(new_local_positions):
+            return False
+        for p in new_local_positions:
+            p[2].local_position = (p[0], p[1])
+        self.rotated(self)
+        return True
+    def rotate_right(self):
+        """
+        Attempts to rotate this polyomino right
+        """
+        new_local_positions = []
+        # rotation equation: sin(-90)=-1 cos(-90)=0
+        # x' = x*cos(theta) - y*sin(theta)
+        # y' = x*sin(theta) + y*cos(theta)
+        for b in self.blocks:
+            x = b.local_position[0]
+            y = b.local_position[1]
+            new_local_positions.append((y, -x, b))
+        if not self.__check_locations(new_local_positions):
+            return False
+        for p in new_local_positions:
+            p[2].local_position = (p[0], p[1])
+        self.rotated(self)
+        return True
+    def move_down(self):
+        """
+        Attempts to move this polyomino down
+        """
+        return move_delta((0, 1))
+    def move_delta(self, delta):
+        """
+        Attempts to move this polyomino to the passed position
+        """
+        new_local_positions = []
+        dx = delta[0]
+        dy = delta[1]
+        for b in self.blocks:
+            x = b.local_position[0]
+            y = b.local_position[1]
+            new_local_positions.append((x + dx, y + dy, b))
+        if not self.__check_locations(new_local_positions):
+            return False
+        # update our position, no need to opdate our children's position
+        self.local_position = (self.local_position[0] + dx,\
+                               self.local_position[1] + dy)
+        return True
+        
+class PolyominoFactory(object):
+    """
+    Factory callable class for polyominos
+    """
+    def __init__(self, blocktuples, color):
+        """
+        Creates a new factory
+        
+        blocktupes: Set of tuples of (x,y) for each block location
+        color: Color number to use for this polyomino
+        """
+        self.tuples = blocktuples
+        self.color = color
+    def __call__(self, grid, position):
+        """
+        Creates a polyomino at the passed location
+        """
+        polyomino = Polyomino(position, parent=grid)
+        for pos in self.tuples:
+            polyomino.blocks.append(Block(pos, self.color, \
+                                          parent=polyomino))
+        return polyomino
+
+class Grid(Movable):
+    """
+    Represents a game grid
+    """
+    def __init__(self, position=(0,0), width=10, height=20):
+        super().__init__(position)
+        self.width = width
+        self.height = height
+        self.grid = []
+        self.block_added = Event()
+        self.block_removed = Event()
+        for x in range(width):
+            self.grid.append([])
+            for y in range(height):
+                self.grid[x].append(None)
+    def is_clear(self, position):
+        """
+        Returns true if the passed relative position is clear on the
+        board
+        """
+        x = position[0]
+        y = position[1]
+        if y < 0:
+            return True # we have no bound on the upper side
+        if x < 0 or x >= self.width or y >= self.height:
+            return False
+        return True if self.grid[x][y] is None else False
+    def add_polyomino(self, polyomino):
+        """
+        Adds the passed block to this grid. This modifies the blocks
+        in the passed polyomino to be relative to the grid. If the
+        polyomino's parent is this grid, it no longer has a parent
+        """
+        # we want the block positions relative to the polyomino, not
+        # relative to the parent of the polyomino (us).
+        if polyomino.parent is self:
+            polyomino.parent = None # should make the origin (0,0)
+        for b in polyomino.blocks:
+            # we can suppress the move event here since we are simply
+            # removing a level of parentage
+            lp = b.local_position
+            p = b.position
+            with b.moved: # suppress moved event
+                b.local_position = b.position # as we change position
+                b.parent = None
+            try:
+                self.grid[b.position[0]][b.position[1]] = b
+            except:
+                raise Exception(lp, p, (b.position[0], b.position[1]))
+            b.parent = self # the block is relative to us now
+            self.block_added(self, b)
+    def clear_rows(self):
+        removed = []
+        for y in range(self.height):
+            row = True
+            for x in range(self.width):
+                if self.grid[x][y] is None:
+                    row = False
+                    break
+            if row:
+                # move the blocks above this one down one row
+                # we can do this since we proceed from row 0 upwards
+                for x in range(self.width):
+                    removed.append(self.grid[x][y])
+                for y_p in range(y, 0, -1):
+                    for x in range(self.width):
+                        self.grid[x][y_p] = self.grid[x][y_p-1]
+                        if self.grid[x][y_p] is not None:
+                            lpos = self.grid[x][y_p].local_position
+                            self.grid[x][y_p].local_position =\
+                                (lpos[0], lpos[1]+1)
+                for x in range(self.width):
+                    self.grid[x][0] = None
+        return removed
+
+class Tetris(object):
+    """
+    Tetris game
+    """
+    def __init__(self, position, block_factories):
+        """
+        Initializes this tetris game with the passed block_types.
+        """
+        self.grid = Grid(position)
+        self.__current_piece = None
+        self.delta = datetime.timedelta()
+        self.__score = 0
+        self.__level = 1
+        self.score_changed = Event()
+        self.level_changed = Event()
+        self.grid_changed = Event()
+        self.current_piece_changed = Event()
+        self.possible_blocks = block_factories
+    def __get_new_block(self, position):
+        n = random.randrange(0, len(self.possible_blocks))
+        return self.possible_blocks[n](self.grid, position)
+    @property
+    def current_piece(self):
+        return self.__current_piece
+    @current_piece.setter
+    def current_piece(self, value):
+        last = self.current_piece
+        self.__current_piece = value
+        self.current_piece_changed(self, self.current_piece, last)
+    @property
+    def score(self):
+        return self.__score
+    @score.setter
+    def score(self, value):
+        self.__score = value
+        self.score_changed(self, self.score)
+    @property
+    def level(self):
+        return self.__level
+    @level.setter
+    def level(self, value):
+        self.__level = value
+        self.level_changed(self, self.level)
+    def step(self, delta):
+        self.delta += delta
+        min_delta = datetime.timedelta(seconds=0.5 / self.level)
+        if self.delta >= min_delta:
+            self.delta = datetime.timedelta()
+            if self.current_piece == None:
+                self.current_piece = self.__get_new_block((5, 0))
+            # attempt to move the piece down
+            if not self.down():
+                # check for rows
+                self.grid.add_polyomino(self.current_piece)
+                self.current_piece = None
+                cleared = self.grid.clear_rows()
+                self.score += int(len(cleared) * (len(cleared) / 10))
+    def rotate_left(self):
+        if self.current_piece is not None:
+            if self.current_piece.rotate_left():
+                self.grid_changed(self)
+                return True
+        return False
+    def rotate_right(self):
+        if self.current_piece is not None:
+            if self.current_piece.rotate_right():
+                self.grid_changed(self)
+                return True
+        return False
+    def left(self):
+        if self.current_piece is not None:
+            if self.current_piece.move_delta((-1, 0)):
+                self.grid_changed(self)
+                return True
+        return False
+    def right(self):
+        if self.current_piece is not None:
+            if self.current_piece.move_delta((1, 0)):
+                self.grid_changed(self)
+                return True
+        return False
+    def down(self):
+        if self.current_piece is not None:
+            if self.current_piece.move_delta((0, 1)):
+                self.grid_changed(self)
+                return True
+        return False
+    
+
+class Application(object):
+    def __init__(self, window):
+        self.window = window
+        window.keypad(1)
+        window.nodelay(1)
+        # attempt to load the data
+        self.colordefs = {}
+        self.block_types = {}
+        tree = ET.parse('data.xml')
+        root = tree.getroot()
+        if root is not None:
+            for color in root.findall('color'):
+                self.colordefs[color.get('id')] = \
+                    (get_curses_color(color.get('fg')), \
+                     get_curses_color(color.get('bg')))
+            for t in root.findall('type'):
+                polyominoes = []
+                for p in t.findall('polyomino'):
+                    blocktuples = []
+                    for b in p.findall('block'):
+                        blocktuples.append((int(b.get('x')), \
+                                            int(b.get('y'))))
+                    polyominoes.append(PolyominoFactory(blocktuples,\
+                                       int(p.get('color'))))
+                self.block_types[t.get('name')] = polyominoes
+        # set up the color definitions
+        for i in self.colordefs:
+            color = self.colordefs[i]
+            curses.init_pair(int(i), color[0], color[1])
+    def run(self):
+        curses.curs_set(0)
+        self.window.erase()
+        self.window.border()
+        game = Tetris((35, 1), self.block_types['Tetrominoes'])
+        laststep = datetime.datetime.now()
+        while(True):
+            # ready the buffers
+            recvd = self.window.getch()
+            if recvd == 27:
+                break
+            elif recvd == curses.KEY_DOWN:
+                game.down()
+            elif recvd == curses.KEY_LEFT:
+                game.left()
+            elif recvd == curses.KEY_RIGHT:
+                game.right()
+            elif recvd == curses.KEY_UP:
+                game.rotate_left()
+            game.step(datetime.datetime.now() - laststep)
+            laststep = datetime.datetime.now()
+            self.window.clear()
+            self.window.border()
+            self.window.hline(21, 34, ord('-'), 12)
+            self.window.vline(1, 34, ord('|'), 20)
+            self.window.vline(1, 45, ord('|'), 20)
+            if game.current_piece is not None:
+                for b in game.current_piece.blocks:
+                    self.window.addch(b.position[1], b.position[0],\
+                                      ord('#'),\
+                                      curses.color_pair(b.color))
+            for x in range(game.grid.width):
+                for y in range(game.grid.height):
+                    b = game.grid.grid[x][y]
+                    if b is not None:
+                        self.window.addch(b.position[1], b.position[0],\
+                                          ord('#'),\
+                                          curses.color_pair(b.color))
+            self.window.addstr(15, 50, str(game.score))
+            self.window.refresh()
+            time.sleep(1/16)
+        
+def get_curses_color(name):
+    if name == "black":
+        return curses.COLOR_BLACK
+    elif name == "blue":
+        return curses.COLOR_BLUE
+    elif name == "cyan":
+        return curses.COLOR_CYAN
+    elif name == "green":
+        return curses.COLOR_GREEN
+    elif name == "magenta":
+        return curses.COLOR_MAGENTA
+    elif name == "red":
+        return curses.COLOR_RED
+    elif name == "white":
+        return curses.COLOR_WHITE
+    elif name == "yellow":
+        return curses.COLOR_YELLOW
+    else:
+        return None
+    
+def main(window):
+    app = Application(window)
+    app.run()
+
+if __name__ == "__main__":
+    curses.wrapper(main)

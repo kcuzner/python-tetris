@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<data>
+    <color id="1" character="#" fg="red" bg="white"/>
+    <color id="2" character="#" fg="green" bg="white"/>
+    <color id="3" character="#" fg="blue" bg="white"/>
+    <color id="4" character="#" fg="yellow" bg="white"/>
+    <color id="5" character="#" fg="black" bg="white"/>
+    <color id="6" character="#" fg="magenta" bg="white"/>
+    <color id="7" character="#" fg="cyan" bg="white"/>
+    <type name="Tetrominoes">
+        <polyomino name="line" color="1">
+            <block x="-1" y="0"/>
+            <block x="0" y="0"/>
+            <block x="1" y="0"/>
+            <block x="2" y="0"/>
+        </polyomino>
+        <polyomino name="ell1" color="2">
+            <block x="-1" y="-1"/>
+            <block x="-1" y="0"/>
+            <block x="-1" y="1"/>
+            <block x="0" y="1"/>
+        </polyomino>
+        <polyomino name="ell2" color="3">
+            <block x="1" y="-1"/>
+            <block x="1" y="0"/>
+            <block x="1" y="1"/>
+            <block x="0" y="1"/>
+        </polyomino>
+        <polyomino name="tee" color="4">
+            <block x="0" y="0"/>
+            <block x="-1" y="1"/>
+            <block x="0" y="1"/>
+            <block x="1" y="1"/>
+        </polyomino>
+        <polyomino name="box" color="5">
+            <block x="-1" y="0"/>
+            <block x="-1" y="1"/>
+            <block x="0" y="0"/>
+            <block x="0" y="1"/>
+        </polyomino>
+        <polyomino name="s" color="6">
+            <block x="-1" y="0"/>
+            <block x="0" y="0"/>
+            <block x="0" y="1"/>
+            <block x="1" y="1"/>
+        </polyomino>
+        <polyomino name="z" color="7">
+            <block x="1" y="0"/>
+            <block x="0" y="0"/>
+            <block x="0" y="1"/>
+            <block x="-1" y="1"/>
+        </polyomino>
+    </type>
+</data>

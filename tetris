@@ -723,6 +723,8 @@ class GameState(State):
             self.game.right()
         elif char == curses.KEY_DOWN:
             self.game.down()
+        elif char == 32:
+            self.manager.push_state(PausedState())
     def render(self, window, delta, terminal_size=None):
         if not self.game.step(delta):
             self.manager.pop_state()
@@ -750,6 +752,39 @@ class GameState(State):
         window.addstr(11, 50, "Lines: %i" % self.game.lines)
         window.addstr(12, 50, "Level: %i" % self.game.level)
         self.changed = False
+        
+class PausedState(State):
+    """
+    State during which the game is paused. This only overwrites a
+    small portion of the screen
+    """
+    def init(self, manager):
+        self.manager = manager
+        self.changed = False
+    def enter(self):
+        self.changed = True
+    def exit(self):
+        pass
+    def input(self, char):
+        self.manager.pop_state() # any input makes us leave
+    def render(self, window, delta, terminal_size=None):
+        if not self.changed:
+            return
+        t = "Paused"
+        p = "Press any key to unpause"
+        rb = 0 #row base
+        if terminal_size is not None:
+            rb = int(math.ceil(terminal_size.lines / 2)) - 1
+        window.addstr(rb, self.__get_column(terminal_size, t), t,\
+            curses.A_STANDOUT)
+        window.addstr(rb + 1, self.__get_column(terminal_size, p), p,\
+            curses.A_STANDOUT)
+        self.changed = False
+    def __get_column(self, terminal_size, phrase):
+        if terminal_size == None:
+            return 0
+        else:
+            return int(terminal_size.columns / 2) - int(len(phrase) / 2)
 
 class Application(object):
     def __init__(self, window):

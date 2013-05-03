@@ -13,10 +13,11 @@ The colors for the blocks are also set there as well.
 """
 
 import curses
-import random, time, datetime, math
+import random, time, datetime, math, os, threading
 import xml.etree.ElementTree as ET
+from abc import ABCMeta, abstractmethod
 
-class Event(object):
+class EventDispatcher(object):
     """
     Event object which operates like C# events
     
@@ -34,11 +35,11 @@ class Event(object):
         """
         self.__handlers = []
         self.__supress_count = 0
-    def __call__(self, *args):
+    def __call__(self, e):
         if self.__supress_count > 0:
             return
         for h in self.__handlers:
-            h(*args)
+            h(e)
     def __iadd__(self, other):
         if other not in self.__handlers:
             self.__handlers.append(other)
@@ -51,6 +52,16 @@ class Event(object):
         return self
     def __exit__(self, exc_type, exc_value, traceback):
         self.__supress_count -= 1
+
+class Event(object):
+    """
+    Instance of an event to be dispatched
+    """
+    def __init__(self, target, name, *args, **kwargs):
+        self.target = target
+        self.name = name
+        self.args = args
+        self.kwargs = kwargs
 
 class Movable(object):
     """
@@ -65,40 +76,27 @@ class Movable(object):
     def __init__(self, local_position, parent=None):
         self.__parent = parent
         self.__local_position = local_position
-        self.moved = Event()
-        if parent is not None and hasattr(parent, 'moved'):
-            parent.moved += self.__on_parent_moved
-    def __del__(self):
-        if self.parent is not None and hasattr(parent, 'moved'):
-            parent.moved -= self.__on_parent_moved
-    def __on_parent_moved(self, parent, parent_current, parent_last):
-        """
-        Handler for the parent movement function
-        """
-        if parent is not self.parent:
-            return
-        last = self.__translate_position(parent_last)
-        self.moved(self, self.position, last)
+        self.changed_event = EventDispatcher()
+        self.changed_event += self.__on_changed
+    def __on_changed(self, e):
+        if hasattr(self.__parent, 'changed_event'):
+            self.__parent.changed_event(e)
     @property
     def parent(self):
         return self.__parent
     @parent.setter
     def parent(self, value):
-        if self.parent is not None and hasattr(self.parent, 'moved'):
-            self.parent.moved -= self.__on_parent_moved
-        last = self.position
+        l = self.position
         self.__parent = value
-        if self.parent is not None and hasattr(self.parent, 'moved'):
-            self.parent.moved += self.__on_parent_moved
-        self.moved(self, self.position, last)
+        self.changed_event(Event(self, "parent-changed", current=self.position, last=l))
     @property
     def local_position(self):
         return self.__local_position
     @local_position.setter
     def local_position(self, value):
-        last = self.position
+        l = self.position
         self.__local_position = value
-        self.moved(self, self.position, last)
+        self.changed_event(Event(self, "position-changed", current=self.position, last=l))
     @property
     def position(self):
         origin = (0,0)
@@ -137,7 +135,6 @@ class Block(Movable):
 class Polyomino(Movable):
     def __init__(self, local_position, parent=None):
         super().__init__(local_position, parent)
-        self.rotated = Event()
         self.blocks = []
     def __check_locations(self, locations):
         pos = self.local_position
@@ -164,7 +161,7 @@ class Polyomino(Movable):
             return False
         for p in new_local_positions:
             p[2].local_position = (p[0], p[1])
-        self.rotated(self)
+        self.changed_event(Event(self, "rotated"))
         return True
     def rotate_right(self):
         """
@@ -182,7 +179,7 @@ class Polyomino(Movable):
             return False
         for p in new_local_positions:
             p[2].local_position = (p[0], p[1])
-        self.rotated(self)
+        self.changed_event(Event(self, "rotated"))
         return True
     def move_down(self):
         """
@@ -205,6 +202,7 @@ class Polyomino(Movable):
         # update our position, no need to opdate our children's position
         self.local_position = (self.local_position[0] + dx,\
                                self.local_position[1] + dy)
+        self.changed_event(Event(self, "moved", delta=delta))
         return True
         
 class PolyominoFactory(object):
@@ -239,8 +237,6 @@ class Grid(Movable):
         self.width = width
         self.height = height
         self.grid = []
-        self.block_added = Event()
-        self.block_removed = Event()
         for x in range(width):
             self.grid.append([])
             for y in range(height):
@@ -272,15 +268,12 @@ class Grid(Movable):
             # removing a level of parentage
             lp = b.local_position
             p = b.position
-            with b.moved: # suppress moved event
+            with b.changed_event: # suppress events from the block
                 b.local_position = b.position # as we change position
                 b.parent = None
-            try:
-                self.grid[b.position[0]][b.position[1]] = b
-            except:
-                raise Exception(lp, p, (b.position[0], b.position[1]))
+            self.grid[b.position[0]][b.position[1]] = b
             b.parent = self # the block is relative to us now
-            self.block_added(self, b)
+            self.changed_event(Event(self, "block-added", block=b))
     def clear_rows(self):
         removed = []
         for y in range(self.height):
@@ -319,11 +312,7 @@ class Tetris(object):
         self.__score = 0
         self.__level = 1
         self.__lines = 0
-        self.score_changed = Event()
-        self.level_changed = Event()
-        self.lines_changed = Event()
-        self.grid_changed = Event()
-        self.current_piece_changed = Event()
+        self.changed_event = EventDispatcher()
         self.possible_blocks = block_factories
     def __get_new_block(self, position):
         n = random.randrange(0, len(self.possible_blocks))
@@ -333,30 +322,34 @@ class Tetris(object):
         return self.__current_piece
     @current_piece.setter
     def current_piece(self, value):
-        last = self.current_piece
+        l = self.current_piece
         self.__current_piece = value
-        self.current_piece_changed(self, self.current_piece, last)
+        self.changed_event(Event(self, "current-piece-changed",\
+                current_pice=self.current_piece, last=l))
     @property
     def score(self):
         return self.__score
     @score.setter
     def score(self, value):
         self.__score = value
-        self.score_changed(self, self.score)
+        self.changed_event(Event(self, "score-changed",\
+                score=self.score))
     @property
     def level(self):
         return self.__level
     @level.setter
     def level(self, value):
         self.__level = value
-        self.level_changed(self, self.level)
+        self.changed_event(Event(self, "level-changed",\
+                level=self.level))
     @property
     def lines(self):
         return self.__lines;
     @lines.setter
     def lines(self, value):
         self.__lines = value
-        self.lines_changed(self, self.lines)
+        self.changed_event(Event(self, "lines-changed",\
+                lines=self.lines))
     def step(self, delta):
         self.delta += delta
         min_delta = datetime.timedelta(seconds=0.5 / self.level)
@@ -383,48 +376,159 @@ class Tetris(object):
     def rotate_left(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_left():
-                self.grid_changed(self)
+                self.changed_event(Event(self, "piece-rotated-left"))
                 return True
         return False
     def rotate_right(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_right():
-                self.grid_changed(self)
+                self.changed_event(Event(self, "piece-rotated-right"))
                 return True
         return False
     def left(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((-1, 0)):
-                self.grid_changed(self)
+                self.changed_event(Event(self, "piece-moved"))
                 return True
         return False
     def right(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((1, 0)):
-                self.grid_changed(self)
+                self.changed_event(Event(self, "piece-moved"))
                 return True
         return False
     def down(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((0, 1)):
-                self.grid_changed(self)
+                self.changed_event(Event(self, "piece-moved"))
                 return True
         return False
     
+class StateManager(object):
+    """
+    Manages game state and serves as a gateway to the active state
+    """
+    def __init__(self, initial_state):
+        """
+        Creates a new manager with an initial state
+        
+        initial_state: State that will be initialized and entered into
+        """
+        self.__states = []
+        self.__data = {} # shared data for the states
+        self.push_state(initial_state)
+        self.empty = EventDispatcher() # happens when there are no states
+    def push_state(self, state):
+        """
+        Pushes a new state onto the stack and makes it active
+        """
+        if self.active_state is not None:
+            self.active_state.exit()
+        state.init(self)
+        state.enter()
+        self.__states.append(state)
+    def pop_state(self):
+        """
+        Pops the active state from the stack if it exists and enters
+        the next state down
+        """
+        if self.active_state is not None:
+            self.active_state.exit()
+            self.__states.pop()
+        if self.active_state is not None:
+            self.active_state.enter()
+        else:
+            self.empty(self)
+    def replace_state(self, state):
+        """
+        Replaces the current state with the passed state
+        """
+        if self.active_state is None:
+            self.push_state(state)
+        else:
+            self.active_state.exit()
+            self.__states.pop()
+            self.push_state(state)
+    @property
+    def active_state(self):
+        """
+        Returns the active state
+        """
+        if len(self.__states) > 0:
+            return self.__states[-1]
+        return None
+    @property
+    def data(self):
+        """
+        Returns the shared data for this manager
+        """
+        return self.__data
+    def input(self, char):
+        """
+        Sends the passed character into the active state as input
+        """
+        if self.active_state is not None:
+            self.active_state.input(char)
+    def render(self, window, delta, terminal_size=None):
+        """
+        Renders the current state onto the passed window
+        
+        window: Curses window to render to
+        delta: Seconds that have passed since the last render
+        """
+        if self.active_state is not None:
+            self.active_state.render(window, delta, terminal_size)
 
-class Application(object):
-    def __init__(self, window):
-        self.window = window
-        window.keypad(1)
-        window.nodelay(1)
+class State(metaclass=ABCMeta):
+    """
+    Base class for a state
+    """
+    @abstractmethod
+    def init(self, manager):
+        pass
+    @abstractmethod
+    def enter(self):
+        pass
+    @abstractmethod
+    def exit(self):
+        pass
+    @abstractmethod
+    def input(self, char):
+        """
+        Process the passed character as input
+        """
+        pass
+    @abstractmethod
+    def render(self, window, delta, terminal_size=None):
+        """
+        Render this state to the passed window
+        """
+        pass
+        
+
+class StateInitializationException(Exception):
+    """
+    Exception to be raised when a state cannot initialize itself due
+    to one reason or another
+    """
+    def __init__(self, reason):
+        self.reason = reason
+    def __str__(self):
+        return repr(self.reason)
+        
+class LoadState(State):
+    """
+    State which loads the initial resources for the game
+    """
+    def __load(self):
         # attempt to load the data
-        self.colordefs = {}
-        self.block_types = {}
+        colordefs = {}
+        block_types = {}
         tree = ET.parse('data.xml')
         root = tree.getroot()
         if root is not None:
             for color in root.findall('color'):
-                self.colordefs[color.get('id')] = \
+                colordefs[color.get('id')] = \
                     (get_curses_color(color.get('fg')), \
                      get_curses_color(color.get('bg')))
             for t in root.findall('type'):
@@ -436,56 +540,244 @@ class Application(object):
                                             int(b.get('y'))))
                     polyominoes.append(PolyominoFactory(blocktuples,\
                                        int(p.get('color'))))
-                self.block_types[t.get('name')] = polyominoes
+                block_types[t.get('name')] = polyominoes
+        self.manager.data["block_types"] = block_types
         # set up the color definitions
-        for i in self.colordefs:
-            color = self.colordefs[i]
+        for i in colordefs:
+            color = colordefs[i]
             curses.init_pair(int(i), color[0], color[1])
+    def init(self, manager):
+        self.manager = manager
+        self.loading_thread = threading.Thread(target=self.__load)
+        self.loading_thread.start()
+    def enter(self):
+        pass
+    def exit(self):
+        pass
+    def input(self, char):
+        if char == 27: # end this state
+            self.loading_thread.join()
+            self.manager.pop_state()
+    def render(self, window, delta, terminal_size=None):
+        if not self.loading_thread.is_alive(): # become the main menu
+            self.manager.replace_state(MainMenuState())
+            return
+        window.clear()
+        window.border()
+        if terminal_size is None:
+            window.addstr(1, 1, "Loading...%s" % str(delta))
+        else:
+            window.addstr(int(terminal_size.lines / 2),\
+                          int(terminal_size.columns / 2) - 5,\
+                          "Loading...")
+
+class MainMenuState(State):
+    """
+    State for when the game is at the main menu
+    """
+    MENU = [ "New Game", "High Scores", "Quit" ]
+    NEW_GAME_INDEX = 0
+    HIGH_SCORES_INDEX = 1
+    QUIT_INDEX = 2
+    def init(self, manager):
+        self.manager = manager
+        self.changed = False
+        self.selected = 0 # selected menu index
+    def enter(self): 
+        self.changed = True # when we enter, we change
+    def exit(self):
+        pass
+    def input(self, char):
+        if char == 27:
+            self.manager.pop_state()
+        elif char == curses.KEY_UP and self.selected > 0:
+            self.selected -= 1
+            self.changed = True
+        elif char == curses.KEY_DOWN and \
+                self.selected < len(MainMenuState.MENU) - 1:
+            self.selected += 1
+            self.changed = True
+        elif char == 10:
+            if self.selected == MainMenuState.NEW_GAME_INDEX:
+                self.manager.push_state(NewGameMenuState())
+            elif self.selected == MainMenuState.HIGH_SCORES_INDEX:
+                self.manager.push_state(HighScoresState())
+            elif self.selected == MainMenuState.QUIT_INDEX:
+                self.manager.pop_state()
+            self.changed = True
+    def render(self, window, delta, terminal_size=None):
+        if not self.changed:
+            return
+        window.clear()
+        window.border()
+        title = "Tetris"
+        dash = "---"
+        menu = "Main Menu"
+        window.addstr(1, self.__get_column(terminal_size, title), title)
+        window.addstr(3, self.__get_column(terminal_size, dash), dash)
+        window.addstr(4, self.__get_column(terminal_size, menu), menu)
+        for i in range(len(MainMenuState.MENU)):
+            phrase = MainMenuState.MENU[i]
+            attr = curses.A_STANDOUT if i == self.selected else 0
+            window.addstr(6 + i, \
+                          self.__get_column(terminal_size, phrase),\
+                          phrase, attr)
+        self.changed = False
+    def __get_column(self, terminal_size, phrase):
+        if terminal_size == None:
+            return 0
+        else:
+            return int(terminal_size.columns / 2) - int(len(phrase) / 2)
+
+class NewGameMenuState(State):
+    """
+    State for when creating a new game
+    """
+    def init(self, manager):
+        self.manager = manager
+        if "block_types" not in self.manager.data:
+            raise Exception(self.manager.data)
+            #raise StateInitializationException(\
+            #        "Block types uninitialized")
+        if len(self.manager.data["block_types"]) == 0:
+            raise StateInitializationException("No block types loaded")
+        self.block_types = list(self.manager.data["block_types"].keys())
+        self.block_types.sort()
+        self.selected = 0
+        self.changed = False
+    def enter(self):
+        self.changed = True
+    def exit(self):
+        pass
+    def input(self, char):
+        if char == curses.KEY_UP and self.selected > 0:
+            self.selected -= 1
+            self.changed = True
+        elif char == curses.KEY_DOWN and\
+                self.selected < len(self.block_types)-1:
+            self.selected += 1
+            self.changed = True
+        elif char == 10:
+            # create a new game
+            blocks = self.manager.data["block_types"][self.block_types[self.selected]]
+            self.manager.replace_state(GameState(blocks))
+    def render(self, window, delta, terminal_size=None):
+        if not self.changed:
+            return
+        window.clear()
+        window.border()
+        title = "Select a game type:"
+        window.addstr(2, self.__get_column(terminal_size, title), title)
+        for i in range(len(self.block_types)):
+            phrase = self.block_types[i]
+            attr = curses.A_STANDOUT if i == self.selected else 0
+            window.addstr(4 + i, \
+                          self.__get_column(terminal_size, phrase),\
+                          phrase, attr)
+        self.changed = False
+    def __get_column(self, terminal_size, phrase):
+        if terminal_size == None:
+            return 0
+        else:
+            return int(terminal_size.columns / 2) - int(len(phrase) / 2)
+    
+class HighScoresState(State):
+    """
+    State for viewing the high scores
+    """
+    def init(self, manager):
+        self.manager = manager
+    def enter(self):
+        pass
+    def exit(self):
+        pass
+    def input(self, char):
+        pass
+    def render(self, window, delta, terminal_size=None):
+        self.manager.pop_state()
+    
+class GameState(State):
+    """
+    State for playing a game
+    """
+    def __init__(self, blocks):
+        self.changed = False
+        self.game = Tetris((35, 1), blocks)
+        self.game.changed_event += self.__on_game_changed
+    def __on_game_changed(self, e):
+        self.changed = True
+    def init(self, manager):
+        self.manager = manager
+    def enter(self):
+        self.changed = True
+    def exit(self):
+        pass
+    def input(self, char):
+        if char == 27:
+            self.manager.pop_state()
+        elif char == curses.KEY_UP:
+            self.game.rotate_left()
+        elif char == curses.KEY_LEFT:
+            self.game.left()
+        elif char == curses.KEY_RIGHT:
+            self.game.right()
+        elif char == curses.KEY_DOWN:
+            self.game.down()
+    def render(self, window, delta, terminal_size=None):
+        if not self.game.step(delta):
+            self.manager.pop_state()
+            return
+        if not self.changed:
+            return # nothing to do here
+        window.clear()
+        window.border()
+        window.hline(21, 34, ord('-'), 12)
+        window.vline(1, 34, ord('|'), 20)
+        window.vline(1, 45, ord('|'), 20)
+        if self.game.current_piece is not None:
+            for b in self.game.current_piece.blocks:
+                window.addch(b.position[1], b.position[0],\
+                             ord('#'),\
+                             curses.color_pair(b.color))
+        for x in range(self.game.grid.width):
+            for y in range(self.game.grid.height):
+                b = self.game.grid.grid[x][y]
+                if b is not None:
+                    window.addch(b.position[1], b.position[0],\
+                                 ord('#'),\
+                                 curses.color_pair(b.color))
+        window.addstr(10, 50, "Score: %i" % self.game.score)
+        window.addstr(11, 50, "Lines: %i" % self.game.lines)
+        window.addstr(12, 50, "Level: %i" % self.game.level)
+        self.changed = False
+
+class Application(object):
+    def __init__(self, window):
+        self.window = window
+        window.nodelay(1)
+        self.manager = StateManager(LoadState())
+        self.running = True
+        self.manager.empty += self.stop # stop when manager stack empty
+    def stop(self, manager):
+        self.running = False
     def run(self):
         curses.curs_set(0)
-        self.window.erase()
-        self.window.border()
-        game = Tetris((35, 1), self.block_types['Tetrominoes'])
-        laststep = datetime.datetime.now()
-        while(True):
-            # ready the buffers
-            recvd = self.window.getch()
-            if recvd == 27:
-                break
-            elif recvd == curses.KEY_DOWN:
-                game.down()
-            elif recvd == curses.KEY_LEFT:
-                game.left()
-            elif recvd == curses.KEY_RIGHT:
-                game.right()
-            elif recvd == curses.KEY_UP:
-                game.rotate_left()
-            if not game.step(datetime.datetime.now() - laststep):
-                break
-            laststep = datetime.datetime.now()
-            self.window.clear()
-            self.window.border()
-            self.window.hline(21, 34, ord('-'), 12)
-            self.window.vline(1, 34, ord('|'), 20)
-            self.window.vline(1, 45, ord('|'), 20)
-            if game.current_piece is not None:
-                for b in game.current_piece.blocks:
-                    self.window.addch(b.position[1], b.position[0],\
-                                      ord('#'),\
-                                      curses.color_pair(b.color))
-            for x in range(game.grid.width):
-                for y in range(game.grid.height):
-                    b = game.grid.grid[x][y]
-                    if b is not None:
-                        self.window.addch(b.position[1], b.position[0],\
-                                          ord('#'),\
-                                          curses.color_pair(b.color))
-            self.window.addstr(10, 50, "Score: %i" % game.score)
-            self.window.addstr(11, 50, "Lines: %i" % game.lines)
-            self.window.addstr(12, 50, "Level: %i" % game.level)
-            self.window
+        last_render = datetime.datetime.now()
+        size = os.get_terminal_size()
+        while(self.running):
+            active = None
+            while active is not self.manager.active_state:
+                # we don't stop this until the state settles down
+                recvd = self.window.getch()
+                if recvd != -1:
+                    self.manager.input(recvd)
+                now = datetime.datetime.now()
+                self.manager.render(self.window, now - last_render, size)
+                active = self.manager.active_state
+            last_render = now
             self.window.refresh()
-            time.sleep(1/16)
+            time.sleep(1/30)
+        return
         
 def get_curses_color(name):
     if name == "black":

@@ -57,8 +57,9 @@ class Event(object):
     """
     Instance of an event to be dispatched
     """
-    def __init__(self, target, *args, **kwargs):
+    def __init__(self, target, name, *args, **kwargs):
         self.target = target
+        self.name = name
         self.args = args
         self.kwargs = kwargs
 
@@ -87,7 +88,7 @@ class Movable(object):
     def parent(self, value):
         l = self.position
         self.__parent = value
-        self.changed_event(Event(self, event="parent-changed", current=self.position, last=l))
+        self.changed_event(Event(self, "parent-changed", current=self.position, last=l))
     @property
     def local_position(self):
         return self.__local_position
@@ -95,7 +96,7 @@ class Movable(object):
     def local_position(self, value):
         l = self.position
         self.__local_position = value
-        self.changed_event(Event(self, event="position-changed", current=self.position, last=l))
+        self.changed_event(Event(self, "position-changed", current=self.position, last=l))
     @property
     def position(self):
         origin = (0,0)
@@ -160,7 +161,7 @@ class Polyomino(Movable):
             return False
         for p in new_local_positions:
             p[2].local_position = (p[0], p[1])
-        self.changed_event(Event(self, event="rotated"))
+        self.changed_event(Event(self, "rotated"))
         return True
     def rotate_right(self):
         """
@@ -178,7 +179,7 @@ class Polyomino(Movable):
             return False
         for p in new_local_positions:
             p[2].local_position = (p[0], p[1])
-        self.changed_event(Event(self, event="rotated"))
+        self.changed_event(Event(self, "rotated"))
         return True
     def move_down(self):
         """
@@ -201,7 +202,7 @@ class Polyomino(Movable):
         # update our position, no need to opdate our children's position
         self.local_position = (self.local_position[0] + dx,\
                                self.local_position[1] + dy)
-        self.changed_event(Event(self, event="moved", delta=delta))
+        self.changed_event(Event(self, "moved", delta=delta))
         return True
         
 class PolyominoFactory(object):
@@ -272,7 +273,7 @@ class Grid(Movable):
                 b.parent = None
             self.grid[b.position[0]][b.position[1]] = b
             b.parent = self # the block is relative to us now
-            self.changed_event(Event(self, event="block-added", block=b))
+            self.changed_event(Event(self, "block-added", block=b))
     def clear_rows(self):
         removed = []
         for y in range(self.height):
@@ -323,7 +324,7 @@ class Tetris(object):
     def current_piece(self, value):
         l = self.current_piece
         self.__current_piece = value
-        self.changed_event(Event(self, event="current-piece-changed",\
+        self.changed_event(Event(self, "current-piece-changed",\
                 current_pice=self.current_piece, last=l))
     @property
     def score(self):
@@ -331,7 +332,7 @@ class Tetris(object):
     @score.setter
     def score(self, value):
         self.__score = value
-        self.changed_event(Event(self, event="score-changed",\
+        self.changed_event(Event(self, "score-changed",\
                 score=self.score))
     @property
     def level(self):
@@ -339,7 +340,7 @@ class Tetris(object):
     @level.setter
     def level(self, value):
         self.__level = value
-        self.changed_event(Event(self, event="level-changed",\
+        self.changed_event(Event(self, "level-changed",\
                 level=self.level))
     @property
     def lines(self):
@@ -347,7 +348,7 @@ class Tetris(object):
     @lines.setter
     def lines(self, value):
         self.__lines = value
-        self.changed_event(Event(self, event="lines-changed",\
+        self.changed_event(Event(self, "lines-changed",\
                 lines=self.lines))
     def step(self, delta):
         self.delta += delta
@@ -375,31 +376,31 @@ class Tetris(object):
     def rotate_left(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_left():
-                self.changed_event(Event(self, event="piece-rotated-left"))
+                self.changed_event(Event(self, "piece-rotated-left"))
                 return True
         return False
     def rotate_right(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_right():
-                self.changed_event(Event(self, event="piece-rotated-right"))
+                self.changed_event(Event(self, "piece-rotated-right"))
                 return True
         return False
     def left(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((-1, 0)):
-                self.changed_event(Event(self, event="piece-moved"))
+                self.changed_event(Event(self, "piece-moved"))
                 return True
         return False
     def right(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((1, 0)):
-                self.changed_event(Event(self, event="piece-moved"))
+                self.changed_event(Event(self, "piece-moved"))
                 return True
         return False
     def down(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((0, 1)):
-                self.changed_event(Event(self, event="piece-moved"))
+                self.changed_event(Event(self, "piece-moved"))
                 return True
         return False
     

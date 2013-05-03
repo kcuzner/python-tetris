@@ -10,6 +10,7 @@ TODO
 ----
 
  * Handle window resizing
+ * Separate modules out so that its easier to use
  * High score screen
  * Network games
  * Move from curses to pyglet

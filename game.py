@@ -2,7 +2,7 @@
 Main game module for tetris
 """
 
-import random, datetime, math
+import random, datetime, math, asyncore
 from events import *
 
 class Movable(EventedObject):
@@ -17,7 +17,24 @@ class Movable(EventedObject):
     """
     def __init__(self, local_position, parent=None):
         super().__init__(parent)
+        if hasattr(self.parent, 'event'):
+            self.parent.event += self.__on_parent_event
         self.__local_position = local_position
+    def __on_event(self, e):
+        # update parent event handler
+        if e.target is self and e.name == "parent-changing":
+            if hasattr(e.kwargs['current'], 'event'):
+                e.kwargs['current'].event -= self.__on_parent_event
+        if e.target is self and e.name == "parent-changed":
+            if hasattr(e.kwargs['current'], 'event'):
+                e.kwargs['current'].event += self.__on_parent_event
+    def __on_parent_event(self, e):
+        if e.target is self.parent and e.name == "position-changed":
+            # we echo back this event with our new position because
+            # we depend on the parent position
+            l = self.__translate_position(e.kwargs['last'])
+            self.event(Event(self, "position-changed",\
+                             current=self.position, last=l))
     @property
     def local_position(self):
         return self.__local_position
@@ -25,11 +42,12 @@ class Movable(EventedObject):
     def local_position(self, value):
         l = self.position
         self.__local_position = value
-        self.changed_event(Event(self, "position-changed", current=self.position, last=l))
+        self.event(Event(self, "position-changed",\
+                         current=self.position, last=l))
     @property
     def position(self):
         origin = (0,0)
-        if self.parent is not None:
+        if hasattr(self.parent, 'position'):
             origin = self.parent.position
         return self.__translate_position(origin)
         
@@ -60,6 +78,9 @@ class Block(Movable):
     @property
     def color(self):
         return self.__color
+    @property
+    def render(self):
+        return (self.color, '#')
 
 class Polyomino(Movable):
     def __init__(self, local_position, parent=None):
@@ -90,7 +111,7 @@ class Polyomino(Movable):
             return False
         for p in new_local_positions:
             p[2].local_position = (p[0], p[1])
-        self.changed_event(Event(self, "rotated"))
+        self.event(Event(self, "rotated"))
         return True
     def rotate_right(self):
         """
@@ -108,13 +129,8 @@ class Polyomino(Movable):
             return False
         for p in new_local_positions:
             p[2].local_position = (p[0], p[1])
-        self.changed_event(Event(self, "rotated"))
+        self.event(Event(self, "rotated"))
         return True
-    def move_down(self):
-        """
-        Attempts to move this polyomino down
-        """
-        return move_delta((0, 1))
     def move_delta(self, delta):
         """
         Attempts to move this polyomino to the passed position
@@ -128,10 +144,12 @@ class Polyomino(Movable):
             new_local_positions.append((x + dx, y + dy, b))
         if not self.__check_locations(new_local_positions):
             return False
+        l = self.position
         # update our position, no need to opdate our children's position
         self.local_position = (self.local_position[0] + dx,\
                                self.local_position[1] + dy)
-        self.changed_event(Event(self, "moved", delta=delta))
+        self.event(Event(self, "position-changed",\
+                         current=self.position, last=l))
         return True
         
 class PolyominoFactory(object):
@@ -161,8 +179,8 @@ class Grid(Movable):
     """
     Represents a game grid
     """
-    def __init__(self, position=(0,0), width=10, height=20):
-        super().__init__(position)
+    def __init__(self, position=(0,0), width=10, height=20,parent=None):
+        super().__init__(position, parent)
         self.width = width
         self.height = height
         self.grid = []
@@ -197,12 +215,12 @@ class Grid(Movable):
             # removing a level of parentage
             lp = b.local_position
             p = b.position
-            with b.changed_event: # suppress events from the block
+            with b.event: # suppress events from the block
                 b.local_position = b.position # as we change position
                 b.parent = None
             self.grid[b.position[0]][b.position[1]] = b
             b.parent = self # the block is relative to us now
-            self.changed_event(Event(self, "block-added", block=b))
+            self.event(Event(self, "block-added", block=b))
     def clear_rows(self):
         removed = []
         for y in range(self.height):
@@ -225,9 +243,11 @@ class Grid(Movable):
                                 (lpos[0], lpos[1]+1)
                 for x in range(self.width):
                     self.grid[x][0] = None
+        for r in removed:
+            self.event(Event(self, "block-removed", block=r))
         return removed
 
-class Tetris(object):
+class MasterTetris(EventedObject):
     """
     Tetris game
     """
@@ -235,13 +255,13 @@ class Tetris(object):
         """
         Initializes this tetris game with the passed block_types.
         """
-        self.grid = Grid(position)
+        super().__init__()
+        self.grid = Grid(position, parent=self)
         self.__current_piece = None
         self.delta = datetime.timedelta()
         self.__score = 0
         self.__level = 1
         self.__lines = 0
-        self.changed_event = EventDispatcher()
         self.possible_blocks = block_factories
     def __get_new_block(self, position):
         n = random.randrange(0, len(self.possible_blocks))
@@ -253,7 +273,7 @@ class Tetris(object):
     def current_piece(self, value):
         l = self.current_piece
         self.__current_piece = value
-        self.changed_event(Event(self, "current-piece-changed",\
+        self.event(Event(self, "current-piece-changed",\
                 current_pice=self.current_piece, last=l))
     @property
     def score(self):
@@ -261,7 +281,7 @@ class Tetris(object):
     @score.setter
     def score(self, value):
         self.__score = value
-        self.changed_event(Event(self, "score-changed",\
+        self.event(Event(self, "score-changed",\
                 score=self.score))
     @property
     def level(self):
@@ -269,7 +289,7 @@ class Tetris(object):
     @level.setter
     def level(self, value):
         self.__level = value
-        self.changed_event(Event(self, "level-changed",\
+        self.event(Event(self, "level-changed",\
                 level=self.level))
     @property
     def lines(self):
@@ -277,7 +297,7 @@ class Tetris(object):
     @lines.setter
     def lines(self, value):
         self.__lines = value
-        self.changed_event(Event(self, "lines-changed",\
+        self.event(Event(self, "lines-changed",\
                 lines=self.lines))
     def step(self, delta):
         self.delta += delta
@@ -305,30 +325,73 @@ class Tetris(object):
     def rotate_left(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_left():
-                self.changed_event(Event(self, "piece-rotated-left"))
+                self.event(Event(self, "piece-rotated-left"))
                 return True
         return False
     def rotate_right(self):
         if self.current_piece is not None:
             if self.current_piece.rotate_right():
-                self.changed_event(Event(self, "piece-rotated-right"))
+                self.event(Event(self, "piece-rotated-right"))
                 return True
         return False
     def left(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((-1, 0)):
-                self.changed_event(Event(self, "piece-moved"))
+                self.event(Event(self, "piece-moved"))
                 return True
         return False
     def right(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((1, 0)):
-                self.changed_event(Event(self, "piece-moved"))
+                self.event(Event(self, "piece-moved"))
                 return True
         return False
     def down(self):
         if self.current_piece is not None:
             if self.current_piece.move_delta((0, 1)):
-                self.changed_event(Event(self, "piece-moved"))
+                self.event(Event(self, "piece-moved"))
                 return True
         return False
+
+class SlaveTetris(EventedObject):
+    """
+    Game that follows another. When this object is called, it processes
+    an event as if it were a tetris game
+    """
+    pass
+
+class NetworkTetrisHost(asyncore.dispatcher):
+    """
+    Host end of a multiplayer tetris game
+    
+    Before the game is marked as started, any number of clients can
+    connect. After tha game begins, new connections will be closed after
+    giving them a message of some sort.
+    
+    Events are set along the socket. Each block is tracked by using its
+    id number, which is unique per game-instance (of which there are
+    many)
+    
+    The host serves as a repeater for each client, so that each client
+    sees the events that happen on every other client including the
+    host.
+    
+    It may be possible to do a headless host that just forwards packets
+    around.
+    
+    When everyone's game has ended, the winner is announced.
+    
+    The host gives each player an identifier. When a client joins, it
+    is informed of all the other identifers and the names attached to
+    them.
+    """
+    def __init__(self, host, port, username):
+        """
+        Initializes the host game
+        """
+        pass
+
+class NetworkTetrisClient(object):
+    """
+    """
+    pass

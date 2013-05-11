@@ -309,16 +309,31 @@ class GameState(State):
     State for playing a game
     """
     def __init__(self, blocks):
-        self.changed = False
         self.last_size = None
-        self.game = Tetris((35, 1), blocks)
-        self.game.changed_event += self.__on_game_changed
-    def __on_game_changed(self, e):
-        self.changed = True
+        self.game = MasterTetris((35, 1), blocks)
+        self.game.event += self.__on_game_event
+        self.to_erase = {}
+        self.to_draw = {}
+        self.redraw = False
+    def __on_game_event(self, e):
+        if e.name == 'position-changed' and hasattr(e.target, 'render'):
+            if e.kwargs['last'][1] < 1 or e.kwargs['current'][1] < 1:
+                return
+            if id(e.target) not in self.to_erase:
+                self.to_erase[id(e.target)] = e.kwargs['last']
+            self.to_draw[id(e.target)] = e.kwargs['current'] +\
+                                         (e.target.render[0],)
+        if e.name == "block-removed":
+            # we need to erase at this block's position
+            if id(e.kwargs['block']) not in self.to_erase:
+                self.to_erase[id(e.kwargs['block'])] =\
+                    e.kwargs['block'].position
     def init(self, manager):
         self.manager = manager
     def enter(self):
-        self.changed = True
+        self.redraw = True
+        self.to_erase.clear()
+        self.to_draw.clear()
     def exit(self):
         pass
     def input(self, char):
@@ -338,29 +353,43 @@ class GameState(State):
         if not self.game.step(delta):
             self.manager.pop_state()
             return
-        if not self.changed:
-            return # nothing to do here
-        window.clear()
-        window.border()
-        window.hline(21, 34, ord('-'), 12)
-        window.vline(1, 34, ord('|'), 20)
-        window.vline(1, 45, ord('|'), 20)
-        if self.game.current_piece is not None:
-            for b in self.game.current_piece.blocks:
-                window.addch(b.position[1], b.position[0],\
-                             ord('#'),\
-                             curses.color_pair(b.color))
-        for x in range(self.game.grid.width):
-            for y in range(self.game.grid.height):
-                b = self.game.grid.grid[x][y]
-                if b is not None:
+        if self.redraw:
+            window.clear()
+            window.border()
+            window.hline(21, 34, ord('-'), 12)
+            window.vline(1, 34, ord('|'), 20)
+            window.vline(1, 45, ord('|'), 20)
+            if self.game.current_piece is not None:
+                for b in self.game.current_piece.blocks:
                     window.addch(b.position[1], b.position[0],\
                                  ord('#'),\
                                  curses.color_pair(b.color))
-        window.addstr(10, 50, "Score: %i" % self.game.score)
-        window.addstr(11, 50, "Lines: %i" % self.game.lines)
-        window.addstr(12, 50, "Level: %i" % self.game.level)
-        self.changed = False
+            for x in range(self.game.grid.width):
+                for y in range(self.game.grid.height):
+                    b = self.game.grid.grid[x][y]
+                    if b is not None:
+                        window.addch(b.position[1], b.position[0],\
+                                     ord('#'),\
+                                     curses.color_pair(b.render[0]))
+            self.to_erase.clear()
+            self.to_draw.clear()
+            self.redraw = False
+        else:
+            if len(self.to_erase) == 0 or len(self.to_draw) == 0:
+                return
+            for v in self.to_erase:
+                pos = self.to_erase[v]
+                window.addch(pos[1], pos[0],\
+                             ord(' '))
+            for v in self.to_draw:
+                pos = self.to_draw[v]
+                window.addch(pos[1], pos[0],\
+                             ord('#'), curses.color_pair(pos[2]))
+            self.to_erase.clear()
+            self.to_draw.clear()
+        window.addstr(10, 50, "Score: %i      " % self.game.score)
+        window.addstr(11, 50, "Lines: %i      " % self.game.lines)
+        window.addstr(12, 50, "Level: %i      " % self.game.level)
         
 class PausedState(State):
     """

@@ -55,17 +55,25 @@ class EventedObject(object):
     Object with an event and support for bubbling
     """
     def __init__(self, parent=None):
-        self.__parent = parent
-        self.changed_event = EventDispatcher()
-        self.changed_event += self.__on_changed
-    def __on_changed(self, e):
-        if hasattr(self.__parent, 'changed_event'):
-            self.__parent.changed_event(e)
+        self.__parent = None
+        self.__children = set()
+        self.event = EventDispatcher()
+        self.event += self.__on_event
+        self.parent = parent #cause the event to go off
+    def __on_event(self, e):
+        """
+        Echoes our events up the chain to our parent.
+        """
+        if hasattr(self.__parent, 'event'):
+            self.__parent.event(e)
     @property
     def parent(self):
         return self.__parent
     @parent.setter
     def parent(self, value):
-        l = self.position
+        l = self.parent
+        self.event(Event(self, "parent-changing",\
+            current=self.parent))
         self.__parent = value
-        self.changed_event(Event(self, "parent-changed", current=self.position, last=l))
+        self.event(Event(self, "parent-changed",\
+            current=self.parent, last=l))
